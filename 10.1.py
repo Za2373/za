@@ -2,50 +2,89 @@ import pymysql
 import time
 
 
-# 学生管理核心类
+# ====================== 登录验证模块 ======================
+def login_system():
+    """系统登录功能（关联 company2.user 表）"""
+    print("\n" + "=" * 30)
+    print("    欢迎使用学生信息管理系统")
+    print("=" * 30)
+
+    while True:
+        username = input("请输入用户名（输入0退出）：").strip()
+        if username == '0':
+            return None  # 返回None表示主动退出
+
+        password = input("请输入密码：").strip()
+
+        try:
+            # 连接 company2 数据库验证身份
+            conn = pymysql.connect(
+                host="localhost",
+                user="root",
+                password="root123456",
+                database="company2",  # 复用之前的用户表数据库
+                charset="utf8mb4"
+            )
+            with conn.cursor() as cursor:
+                # 查询用户名和密码是否匹配
+                sql = "SELECT * FROM users WHERE username = %s AND password = %s"
+                cursor.execute(sql, (username, password))
+                user = cursor.fetchone()
+
+                if user:
+                    print(f"\n✅ 登录成功！欢迎，{username}！")
+                    conn.close()
+                    return username  # 登录成功，返回用户名
+                else:
+                    print("❌ 用户名或密码错误，请重新输入！\n")
+            conn.close()
+        except Exception as e:
+            print(f"❌ 登录验证异常: {e}")
+            return None
+
+
+# ====================== 学生管理核心类 ======================
 class StudentManager:
     # 初始化数据库连接
-    def __init__(self):
+    def __init__(self, current_user):
+        self.current_user = current_user  # 记录当前登录的操作员
         try:
             self.conn = pymysql.connect(
                 host="localhost",
                 user="root",
                 password="root123456",
-                database="student_db",
+                database="student_db",  # 学生数据库
                 charset="utf8mb4",
                 autocommit=False
             )
-            # 使用 DictCursor 让查询结果变成字典，通过键名取值更直观
             self.cursor = self.conn.cursor(pymysql.cursors.DictCursor)
-            print("✅ 数据库连接成功（双表模式）")
+            print("✅ 学生数据库连接成功")
         except Exception as e:
             print("❌ 数据库连接失败：", e)
 
-    # 日志记录工具
+    # 日志记录工具（升级：记录操作人）
     def write_log(self, msg):
         now = time.strftime("%Y-%m-%d %H:%M:%S")
-        with open("student_log.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{now}] {msg}\n")
+        with open("../za10/student_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"[{now}] [操作员:{self.current_user}] {msg}\n")
 
-    # 1. 添加学生信息 + 录入成绩（双表同时插入）
+    # 1. 添加学生信息 + 录入成绩
     def add_student(self, stu_id, name, age, major, chinese, math, english):
         try:
-            # 先插入学生基础信息
             sql_stu = "INSERT INTO student(stu_id, name, age, major) VALUES(%s,%s,%s,%s)"
             self.cursor.execute(sql_stu, (stu_id, name, age, major))
 
-            # 再插入对应成绩数据
             sql_score = "INSERT INTO student_score(stu_id, chinese, math, english) VALUES(%s,%s,%s,%s)"
             self.cursor.execute(sql_score, (stu_id, chinese, math, english))
 
             self.conn.commit()
             print("✅ 学生信息及成绩添加成功")
-            self.write_log(f"新增学生：学号{stu_id} 姓名{name} 并录入成绩")
+            self.write_log(f"新增学生：学号{stu_id} 姓名{name}")
         except Exception as e:
             self.conn.rollback()
             print(f"❌ 添加失败！学号重复或数据格式错误. 详情: {e}")
 
-    # 2. 查看所有学生（联查双表，展示完整信息+成绩）
+    # 2. 查看所有学生
     def show_all_student(self):
         sql = """
         SELECT s.stu_id, s.name, s.age, s.major, sc.chinese, sc.math, sc.english
@@ -61,7 +100,6 @@ class StudentManager:
 
         print("\n========== 学生完整信息及成绩列表 ==========")
         for item in res:
-            # 处理可能为 NULL 的成绩（如果没录入成绩）
             c = item["chinese"] or 0
             m = item["math"] or 0
             e = item["english"] or 0
@@ -72,7 +110,7 @@ class StudentManager:
             print(f"语文：{c} | 数学：{m} | 英语：{e} | 总分：{total} | 平均分：{avg:.1f}")
             print("-" * 90)
 
-    # 3. 按学号精准查询学生成绩及信息
+    # 3. 按学号精准查询
     def search_score_by_id(self, stu_id):
         sql = """
         SELECT s.stu_id, s.name, s.age, s.major, sc.chinese, sc.math, sc.english
@@ -80,7 +118,6 @@ class StudentManager:
         LEFT JOIN student_score sc ON s.stu_id = sc.stu_id
         WHERE s.stu_id = %s
         """
-        # 🐛 Bug修复：参数必须传元组 (stu_id,)
         self.cursor.execute(sql, (stu_id,))
         res = self.cursor.fetchone()
 
@@ -92,18 +129,12 @@ class StudentManager:
             avg = total / 3
 
             print("\n========== 学生成绩详情 ==========")
-            print(f"学号：{res['stu_id']}")
-            print(f"姓名：{res['name']}")
-            print(f"年龄：{res['age']}")
-            print(f"专业：{res['major']}")
-            print(f"语文成绩：{c}")
-            print(f"数学成绩：{m}")
-            print(f"英语成绩：{e}")
-            print(f"总成绩：{total} 分 | 平均成绩：{avg:.1f} 分")
+            print(f"学号：{res['stu_id']} | 姓名：{res['name']} | 年龄：{res['age']} | 专业：{res['major']}")
+            print(f"语文：{c} | 数学：{m} | 英语：{e} | 总分：{total} | 平均分：{avg:.1f}")
         else:
             print("❌ 未查询到该学生信息！")
 
-    # 4. 修改学生基础信息（仅修改学生表）
+    # 4. 修改学生基础信息
     def update_student_info(self, stu_id, new_age, new_major):
         try:
             sql = "UPDATE student SET age=%s, major=%s WHERE stu_id=%s"
@@ -119,7 +150,7 @@ class StudentManager:
             self.conn.rollback()
             print(f"❌ 修改失败: {e}")
 
-    # 5. 单独修改学生成绩（仅修改成绩表）
+    # 5. 单独修改学生成绩
     def update_student_score(self, stu_id, c, m, e):
         try:
             sql = "UPDATE student_score SET chinese=%s, math=%s, english=%s WHERE stu_id=%s"
@@ -135,7 +166,7 @@ class StudentManager:
             self.conn.rollback()
             print(f"❌ 成绩修改失败: {e}")
 
-    # 6. 删除学生信息（外键级联删除，成绩自动删除）
+    # 6. 删除学生信息（级联删除成绩）
     def delete_student(self, stu_id):
         try:
             sql = "DELETE FROM student WHERE stu_id=%s"
@@ -158,11 +189,22 @@ class StudentManager:
         print("✅ 数据库连接已关闭")
 
 
-# 主菜单函数
+# ====================== 主菜单流程 ======================
 def main():
-    sm = StudentManager()
+    # 第一步：登录验证
+    current_user = login_system()
+
+    # 如果用户输入0退出，则直接结束程序
+    if not current_user:
+        print("👋 已退出系统，再见！")
+        return
+
+    # 第二步：登录成功，初始化学生管理对象，并传入当前操作员
+    sm = StudentManager(current_user)
+
+    # 第三步：进入学生管理主菜单
     while True:
-        print("\n======= 学生信息成绩管理系统【双表版】=======")
+        print(f"\n======= 学生信息成绩管理系统【当前用户：{sm.current_user}】=======")
         print("1. 添加学生（含成绩录入）")
         print("2. 查看所有学生完整信息")
         print("3. 按学号查询学生成绩")
@@ -170,7 +212,7 @@ def main():
         print("5. 修改学生成绩信息")
         print("6. 删除学生（含成绩）")
         print("0. 退出系统")
-        print("==========================================")
+        print("=" * 50)
 
         choice = input("请输入功能编号：")
 
@@ -179,7 +221,6 @@ def main():
             name = input("请输入学生姓名：")
             age = input("请输入学生年龄：")
             major = input("请输入所学专业：")
-            # 💡 优化：成绩转为整数
             try:
                 c = int(input("请输入语文成绩："))
                 m = int(input("请输入数学成绩："))
